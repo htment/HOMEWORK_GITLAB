@@ -1,0 +1,91 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    - name: Обновление кэша apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Загрузка ключа GPG GitLab и добавление его в apt
+      shell: |
+          curl -fsSL https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu/gpg.key > /tmp/gitlab_key.gpg
+          sudo apt-key add /tmp/gitlab_key.gpg
+          rm -f /tmp/gitlab_key.gpg
+      changed_when: false
+      ignore_errors: true # Добавлено для игнорирования ошибок, если ключ уже есть
+
+    - name: Обновление кэша apt после импорта ключа
+      apt:
+        update_cache: yes
+
+    - name: Установка необходимых пакетов
+      apt:
+        name:
+          - curl
+          - openssh-server
+          - ca-certificates
+          - postfix
+        state: present
+        update_cache: yes
+
+    - name: Добавление репозитория GitLab (с отключенной проверкой GPG - ВРЕМЕННО!)
+      apt_repository:
+        repo: deb [trusted=yes] https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu jammy main
+        state: present
+        update_cache: yes
+
+
+    - name: Установка GitLab
+      apt:
+        name: gitlab-ce
+        state: present
+        update_cache: yes
+
+    # - name: Настройка Postfix (необязательно - для email уведомлений)
+    #   blockinfile:
+    #     path: /etc/postfix/main.cf
+    #     block: |
+    #       myhostname = your.gitlab.domain.com
+    #       mydomain = your.gitlab.domain.com
+    #       myorigin = $mydomain
+    #       inet_interfaces = all
+    #     create: yes
+
+    # - name: Перезапуск Postfix (необязательно - для email уведомлений)
+    #   service:
+    #     name: postfix
+    #     state: restarted
+
+    - name: Настройка внешнего URL GitLab
+      ini_file:
+        path: /etc/gitlab/gitlab.rb
+        section: 'external_url'
+        option: 'url'
+        value: "https://{{ ansible_default_ipv4.address }}:2222"
+        state: present
+
+    - name: Перенастройка GitLab
+      command: sudo gitlab-ctl reconfigure
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Проверка статуса GitLab
+      command: sudo gitlab-ctl status
+      changed_when: false
+
+    - name: Включение и запуск сервиса GitLab
+      service:
+        name: gitlab-runsvdir
+        state: started
+        enabled: yes
+
+    - name: Ожидание доступности GitLab (необязательно - настройте таймаут по необходимости)
+      wait_for_connection:
+        host: localhost
+        port: 80
+        delay: 10
+        timeout: 600
+
+  vars:
+    # Замените your.gitlab.domain.com на ваш домен или IP-адрес
